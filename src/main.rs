@@ -37,16 +37,16 @@ struct Config {
 impl Default for Config {
     fn default() -> Self {
         Config {
-            name: todo!(),
-            instance_type: todo!(),
-            distro: todo!(),
-            ami: todo!(),
-            ssh_user: todo!(),
-            subnet: todo!(),
-            security_group: todo!(),
-            iam_role: todo!(),
-            aws_account_id: todo!(),
-            aws_profile: todo!(),
+            name: String::new(),
+            instance_type: String::new(),
+            distro: String::new(),
+            ami: String::new(),
+            ssh_user: String::new(),
+            subnet: String::new(),
+            security_group: String::new(),
+            iam_role: String::from("digitalsanctum-role"),
+            aws_account_id: String::new(),
+            aws_profile: String::new(),
         }
     }
 }
@@ -57,6 +57,9 @@ async fn main() -> Result<(), Error> {
     // let config: Config = Config::parse();
     // println!("{:?}", config);
 
+    let my_cfg = Config::default();
+    confy::store("reign", my_cfg);
+
     let cfg: Result<Config, ConfyError> = confy::load("reign");
     println!("{:?}", cfg.unwrap());
 
@@ -65,7 +68,7 @@ async fn main() -> Result<(), Error> {
     Ok(())
 }
 
-async fn ec2(){
+async fn ec2() -> Result<(), Error> {
     let shared_config = aws_config::load_from_env().await;
     let ec2 = Client::new(&shared_config);
 
@@ -138,4 +141,6 @@ async fn ec2(){
             sleep(Duration::from_secs(1));
         }
     }
+
+    Ok(())
 }
