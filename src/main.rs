@@ -1,39 +1,55 @@
-extern crate confy;
-extern crate core;
 extern crate clap;
+extern crate core;
 
 use std::thread::sleep;
 use std::time::Duration;
-use confy::ConfyError;
-use serde_derive::{Serialize, Deserialize};
 
-use aws_sdk_ec2::model::{
-    IamInstanceProfileSpecification, InstanceNetworkInterfaceSpecification, InstanceStateName,
-    InstanceType, ResourceType, Tag, TagSpecification,
-};
-use aws_sdk_ec2::output::DescribeInstancesOutput;
+use aws_config::meta::region::RegionProviderChain;
+use aws_config::RetryConfig;
 use aws_sdk_ec2::Client;
 use aws_sdk_ec2::Error;
-
+use aws_sdk_ec2::model::{Filter, IamInstanceProfileSpecification, Instance,
+                         InstanceNetworkInterfaceSpecification, InstanceType, Reservation,
+                         ResourceType, Tag, TagSpecification};
+use aws_sdk_ec2::output::DescribeInstancesOutput;
 use clap::{AppSettings, Parser};
+use serde_derive::{Deserialize, Serialize};
 
 #[derive(Parser, Debug, Serialize, Deserialize)]
-#[clap(version, author, about, setting = AppSettings::ArgRequiredElseHelp)]
+#[clap(version, setting = AppSettings::ArgRequiredElseHelp)]
 struct Config {
-    /// Path to the data file
+    /// Name to tag instance with
     #[clap(short, long)]
     name: String,
+    /// File containing arguments
+    #[clap(short, long)]
+    file: Option<String>,
+    /// Instance type of the VM
+    #[clap(short, long)]
     instance_type: String,
+    /// Linux distribution
+    #[clap(short, long)]
     distro: String,
+    /// AMI to use for the VM
+    #[clap(short, long)]
     ami: String,
-    ssh_user: String,
+    /// SSH user
+    #[clap(short, long)]
+    user: Option<String>,
+    /// ID of the subnet to run the VM on
+    #[clap(short, long)]
     subnet: String,
-    security_group: String,
-    iam_role: String,
-    aws_account_id: String,
-    aws_profile: String,
+    /// Security group IDs
+    #[clap(short, long)]
+    groups: Vec<String>,
+    /// Name of the IAM instance profile
+    #[clap(short, long)]
+    role: String,
+    /// AWS profile
+    #[clap(short, long)]
+    profile: Option<String>,
 }
-
+/*
 impl Default for Config {
     fn default() -> Self {
         Config {
@@ -49,29 +65,40 @@ impl Default for Config {
             aws_profile: String::new(),
         }
     }
-}
+}*/
 
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
-    // let config: Config = Config::parse();
-    // println!("{:?}", config);
+    let config: Config = Config::parse();
+    println!("{:?}", config);
 
-    let my_cfg = Config::default();
-    confy::store("reign", my_cfg);
+    let region_provider = RegionProviderChain::default_provider().or_else("us-west-2");
+    let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+    let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+    let client = Client::new(&shared_config);
 
-    let cfg: Result<Config, ConfyError> = confy::load("reign");
-    println!("{:?}", cfg.unwrap());
+    let instance_id = ec2_run_instance(&client).await?;
+    sleep(Duration::from_secs(2));
+    let instance = ec2_wait_for_state(&client, instance_id, "running").await?;
 
+    println!("{:?}", instance);
 
+    // get public DNS
+    /*if let Some(instance) = instance {
+        let mut public_dns = String::default();
+        for interface in instance.network_interfaces().unwrap_or_default() {
+            if let Some(pub_dns) = interface.association().unwrap().public_dns_name() {
+                public_dns = pub_dns.to_string();
+            }
+        }
+        println!("Public DNS: {public_dns}");
+    }*/
 
     Ok(())
 }
 
-async fn ec2() -> Result<(), Error> {
-    let shared_config = aws_config::load_from_env().await;
-    let ec2 = Client::new(&shared_config);
-
+async fn ec2_run_instance(client: &Client) -> Result<String, Error> {
     let network_spec = InstanceNetworkInterfaceSpecification::builder()
         .associate_public_ip_address(true)
         .device_index(0)
@@ -88,7 +115,7 @@ async fn ec2() -> Result<(), Error> {
         .name("digitalsanctum-role")
         .build();
 
-    let run_instances_out = ec2
+    let run_instances_out = client
         .run_instances()
         .image_id("ami-036d46416a34a611c")
         .max_count(1)
@@ -113,34 +140,35 @@ async fn ec2() -> Result<(), Error> {
     let id: &str = if instance_id.is_some() {
         instance_id.unwrap()
     } else {
-        panic!("instance_id was not returned");
+        panic!("InstanceId was not returned");
     };
 
-    println!("instanceId: {}", id);
+    println!("InstanceId: {id}");
 
-    sleep(Duration::from_secs(1));
+    Ok(id.to_string())
+}
+
+async fn ec2_wait_for_state(client: &Client, id: String, state: &str) -> Result<Instance, Error> {
+    let mut instance: Instance = Instance::builder().build();
+
     loop {
+        let instance_ids = vec![id.to_owned()];
+        let status_filter = Filter::builder().name("instance-state-name").values(state).build();
+        let filters = vec![status_filter];
+        let describe_instances_output: DescribeInstancesOutput = client.describe_instances()
+            .set_instance_ids(Some(instance_ids))
+            .set_filters(Some(filters))
+            .send().await?;
 
-        let resp: DescribeInstancesOutput =
-            ec2.describe_instances().instance_ids(id).send().await?;
-
-        let mut actual_state_name = &InstanceStateName::Unknown(String::from(""));
-
-        for reservation in resp.reservations().unwrap_or_default() {
-            for instance in reservation.instances().unwrap_or_default() {
-                if let Some(instance_state_name) = instance.state().unwrap().name() {
-                    actual_state_name = instance_state_name;
-                }
-            }
-        }
-
-        if let InstanceStateName::Running = actual_state_name {
-            println!("instance is running");
+        let reservations: Vec<Reservation> = describe_instances_output.reservations.unwrap_or_default();
+        if reservations.len() == 1 {
+            let reservation: Reservation = reservations.to_owned().pop().unwrap();
+            let instances = reservation.instances.unwrap_or_default();
+            instance = instances.first().unwrap().to_owned();
             break;
         } else {
-            sleep(Duration::from_secs(1));
+            sleep(Duration::from_millis(200))
         }
     }
-
-    Ok(())
+    Ok(instance)
 }
