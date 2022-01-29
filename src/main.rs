@@ -1,7 +1,11 @@
+extern crate confy;
 extern crate core;
+extern crate clap;
 
 use std::thread::sleep;
 use std::time::Duration;
+use confy::ConfyError;
+use serde_derive::{Serialize, Deserialize};
 
 use aws_sdk_ec2::model::{
     IamInstanceProfileSpecification, InstanceNetworkInterfaceSpecification, InstanceStateName,
@@ -10,27 +14,60 @@ use aws_sdk_ec2::model::{
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::Client;
 use aws_sdk_ec2::Error;
-/*
+
+use clap::{AppSettings, Parser};
+
+#[derive(Parser, Debug, Serialize, Deserialize)]
+#[clap(version, author, about, setting = AppSettings::ArgRequiredElseHelp)]
 struct Config {
+    /// Path to the data file
+    #[clap(short, long)]
     name: String,
     instance_type: String,
     distro: String,
     ami: String,
     ssh_user: String,
-    subnets: Vec<String>,
+    subnet: String,
     security_group: String,
     iam_role: String,
     aws_account_id: String,
     aws_profile: String,
-}*/
+}
+
+impl Default for Config {
+    fn default() -> Self {
+        Config {
+            name: todo!(),
+            instance_type: todo!(),
+            distro: todo!(),
+            ami: todo!(),
+            ssh_user: todo!(),
+            subnet: todo!(),
+            security_group: todo!(),
+            iam_role: todo!(),
+            aws_account_id: todo!(),
+            aws_profile: todo!(),
+        }
+    }
+}
+
 
 #[tokio::main]
 async fn main() -> Result<(), Error> {
+    // let config: Config = Config::parse();
+    // println!("{:?}", config);
+
+    let cfg: Result<Config, ConfyError> = confy::load("reign");
+    println!("{:?}", cfg.unwrap());
+
+
+
+    Ok(())
+}
+
+async fn ec2(){
     let shared_config = aws_config::load_from_env().await;
     let ec2 = Client::new(&shared_config);
-
-    // let regions = ec2.describe_regions().send().await?;
-    // println!("{:#?}", regions);
 
     let network_spec = InstanceNetworkInterfaceSpecification::builder()
         .associate_public_ip_address(true)
@@ -78,7 +115,6 @@ async fn main() -> Result<(), Error> {
 
     println!("instanceId: {}", id);
 
-    // TODO race condition here
     sleep(Duration::from_secs(1));
     loop {
 
@@ -102,6 +138,4 @@ async fn main() -> Result<(), Error> {
             sleep(Duration::from_secs(1));
         }
     }
-
-    Ok(())
 }
