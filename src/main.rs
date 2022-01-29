@@ -1,6 +1,9 @@
 extern crate clap;
 extern crate core;
 extern crate port_scanner;
+extern crate base64;
+
+use base64::{encode};
 
 use port_scanner::scan_port_addr;
 
@@ -22,8 +25,8 @@ struct Config {
     #[clap(short, long)]
     name: String,
     /// File containing arguments
-    #[clap(short, long)]
-    file: Option<String>,
+    // #[clap(short, long)]
+    // file: Option<String>,
     /// Instance type of the VM
     #[clap(short, long, default_value = "t3.nano")]
     instance_type: String,
@@ -36,9 +39,9 @@ struct Config {
     /// ID of the subnet to run the VM on
     #[clap(short, long, default_value = "subnet-89ef61d3")]
     subnet: String,
-    /// Security group IDs
-    #[clap(short, long, default_values = &["sg-37d22f44"])]
-    groups: Vec<String>,
+    /// Security group ID
+    #[clap(short, long, default_value = "sg-37d22f44")]
+    group: String,
     /// Name of the IAM role
     #[clap(long, default_value = "digitalsanctum-role")]
     iam_role: String,
@@ -51,6 +54,9 @@ struct Config {
     /// Key name
     #[clap(short, long, default_value = "beefcake")]
     key: String,
+    /// Number of instances to run
+    #[clap(short, long, default_value = "1")]
+    count: i32,
 }
 
 #[tokio::main]
@@ -87,10 +93,19 @@ async fn main() -> Result<(), Error> {
     wait_for_open_port(&address).await;
     println!("SSH port is now available");
     println!();
-    println!("Connection string: ssh -i ~/.ssh/beefcake.pem {}@{public_dns}", config.user);
+    println!("Connection string: ssh -i ~/.ssh/{}.pem {}@{public_dns}", config.key, config.user);
     println!();
 
     Ok(())
+}
+
+fn user_data() -> String {
+    return encode(r#"#!/bin/bash
+
+set -e
+
+echo "test" > /home/ubuntu/test.txt
+"#);
 }
 
 async fn ec2_run_instance(client: &Client, config: &Config) -> Result<String, Error> {
@@ -98,7 +113,7 @@ async fn ec2_run_instance(client: &Client, config: &Config) -> Result<String, Er
         .associate_public_ip_address(true)
         .device_index(0)
         .subnet_id(&config.subnet)
-        .groups("sg-37d22f44")
+        .groups(&config.group)
         .build();
 
     let tag_spec = TagSpecification::builder()
@@ -107,16 +122,21 @@ async fn ec2_run_instance(client: &Client, config: &Config) -> Result<String, Er
         .build();
 
     let iam_spec = IamInstanceProfileSpecification::builder()
-        .name("digitalsanctum-role")
+        .name(&config.iam_role)
         .build();
+
+    let instance_type = InstanceType::from(config.instance_type.as_str());
+
+    let user_data = Some(user_data());
 
     let run_instances_out = client
         .run_instances()
-        .image_id("ami-036d46416a34a611c")
-        .max_count(1)
-        .min_count(1)
-        .instance_type(InstanceType::T3Nano)
-        .key_name("beefcake")
+        .set_user_data(user_data)
+        .image_id(&config.ami)
+        .max_count(config.count)
+        .min_count(config.count)
+        .instance_type(instance_type)
+        .key_name(&config.key)
         .network_interfaces(network_spec)
         .iam_instance_profile(iam_spec)
         .tag_specifications(tag_spec)

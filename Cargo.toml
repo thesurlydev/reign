@@ -17,6 +17,7 @@ maintenance = { status = "actively-developed" }
 [dependencies]
 aws-config = "0.6.0"
 aws-sdk-ec2 = "0.6.0"
+base64 = "0.13.0"
 clap = { version = "3", features = ["derive", "env"] }
 figment = "0.10.6"
 port_scanner = "0.1.5"
