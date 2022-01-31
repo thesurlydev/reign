@@ -1,75 +1,229 @@
+extern crate base64;
 extern crate clap;
 extern crate core;
 extern crate port_scanner;
-extern crate base64;
 
-use base64::{encode};
-
-use port_scanner::scan_port_addr;
-
+use std::error::Error;
+use std::fs::File;
+use std::io::{BufReader};
+use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::RetryConfig;
 use aws_sdk_ec2::{Client, Region};
-use aws_sdk_ec2::Error;
 use aws_sdk_ec2::model::{Filter, IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType, Reservation, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::output::DescribeInstancesOutput;
-use clap::{AppSettings, Parser};
+use base64::encode;
+use clap::{App, Arg, ArgMatches};
+use port_scanner::scan_port_addr;
+use serde::Deserialize;
 
-#[derive(Parser, Debug, PartialEq, Clone, Ord, PartialOrd, Eq)]
-#[clap(version, setting = AppSettings::ArgRequiredElseHelp)]
-struct Config {
+#[derive(Deserialize, Debug, Clone)]
+struct CreateVmConfig {
     /// Name to tag instance with
-    #[clap(short, long)]
     name: String,
-    /// File containing arguments
-    // #[clap(short, long)]
-    // file: Option<String>,
     /// Instance type of the VM
-    #[clap(short, long, default_value = "t3.nano")]
     instance_type: String,
     /// Amazon Machine Image
-    #[clap(short, long, default_value = "ami-036d46416a34a611c")]
     ami: String,
     /// SSH user
-    #[clap(short, long, default_value = "ubuntu")]
     user: String,
     /// ID of the subnet to run the VM on
-    #[clap(short, long, default_value = "subnet-89ef61d3")]
     subnet: String,
     /// Security group ID
-    #[clap(short, long, default_value = "sg-37d22f44")]
     group: String,
     /// Name of the IAM role
-    #[clap(long, default_value = "digitalsanctum-role")]
     iam_role: String,
     /// Name of the AWS region
-    #[clap(short, long, default_value = "us-west-2", env = "AWS_REGION")]
     region: String,
-    /// AWS profile
-    #[clap(short, long, env = "AWS_PROFILE")]
-    profile: Option<String>,
     /// Key name
-    #[clap(short, long, default_value = "beefcake")]
     key: String,
     /// Number of instances to run
-    #[clap(short, long, default_value = "1")]
     count: i32,
 }
 
+impl CreateVmConfig {
+    fn new() -> CreateVmConfig {
+        return CreateVmConfig {
+            name: "".to_string(),
+            instance_type: "".to_string(),
+            ami: "".to_string(),
+            user: "".to_string(),
+            subnet: "".to_string(),
+            group: "".to_string(),
+            iam_role: "".to_string(),
+            region: "".to_string(),
+            key: "".to_string(),
+            count: 0,
+        };
+    }
+
+    fn merge(&self, args: &ArgMatches) -> CreateVmConfig {
+        let mut m = self.clone();
+        if let Some(name) = args.value_of("name") {
+            m.name = String::from(name);
+        }
+        // TODO add other overrides
+
+        m
+    }
+}
+
+fn load_config_from_file<P: AsRef<Path>>(path: P) -> Result<Option<CreateVmConfig>, Box<dyn Error>> {
+    let p = path.as_ref();
+    if !p.exists() {
+        return Ok(None);
+    }
+    println!("Reading config from file: {}", p.display());
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let c = serde_json::from_reader(reader)?;
+    Ok(c)
+}
+
+const REIGN_DEFAULT: &str = "reign.json";
+
 #[tokio::main]
-async fn main() -> Result<(), Error> {
-    let config: Config = Config::parse();
+async fn main() -> Result<(), aws_sdk_ec2::Error> {
 
-    let conf_region: Region = Region::new(config.to_owned().region);
+    let matches = App::new("reign")
+        .about("foo")
+        .subcommand(App::new("create")
+            .subcommand(App::new("vm")
+                .arg(Arg::new("name")
+                    .short('n')
+                    .long("name")
+                    .help("Value given to the 'Name' tag")
+                    .takes_value(true)
+                    .value_name("NAME")
+                    .env("REIGN_VM_NAME")
+                )
+                .arg(Arg::new("instance_type")
+                    .short('t')
+                    .long("instance_type")
+                    .help("Instance type of the VM")
+                    .takes_value(true)
+                    .value_name("INSTANCE_TYPE")
+                    .env("REIGN_VM_INSTANCE_TYPE")
+                )
+                .arg(Arg::new("ami")
+                    .short('a')
+                    .long("ami")
+                    .help("Amazon Machine Image")
+                    .takes_value(true)
+                    .value_name("AMI")
+                    .env("REIGN_VM_MACHINE_IMAGE")
+                )
+                .arg(Arg::new("user")
+                    .short('u')
+                    .long("user")
+                    .help("SSH user")
+                    .takes_value(true)
+                    .value_name("SSH_USER")
+                    .env("REIGN_VM_SSH_USER")
+                )
+                .arg(Arg::new("subnet")
+                    .short('s')
+                    .long("subnet")
+                    .help("Subnet ID")
+                    .takes_value(true)
+                    .value_name("SUBNET_ID")
+                    .env("REIGN_VM_SUBNET_ID")
+                )
+                .arg(Arg::new("group")
+                    .long("security_group")
+                    .help("Security group ID")
+                    .takes_value(true)
+                    .value_name("SECURITY_GROUP_ID")
+                    .env("REIGN_VM_SECURITY_GROUP_ID")
+                )
+                .arg(Arg::new("iam-role")
+                    .short('r')
+                    .long("iam-role")
+                    .help("IAM role name")
+                    .takes_value(true)
+                    .value_name("IAM_ROLE")
+                    .env("REIGN_VM_IAM_ROLE")
+                )
+                .arg(Arg::new("region")
+                    .long("region")
+                    .help("Region to create the VM in")
+                    .takes_value(true)
+                    .value_name("REGION")
+                    .env("REIGN_VM_REGION")
+                )
+                .arg(Arg::new("profile")
+                    .short('p')
+                    .long("profile")
+                    .help("Profile to use")
+                    .takes_value(true)
+                    .value_name("PROFILE")
+                    .env("REIGN_VM_PROFILE")
+                )
+                .arg(Arg::new("key-pair")
+                    .short('k')
+                    .long("key-pair")
+                    .help("Key pair to associate with the VM")
+                    .takes_value(true)
+                    .value_name("KEY_PAIR")
+                    .env("REIGN_VM_KEY_PAIR")
+                )
+                .arg(Arg::new("count")
+                    .short('c')
+                    .long("count")
+                    .help("Number of VMs to create")
+                    .takes_value(true)
+                    .value_name("COUNT")
+                    .env("REIGN_VM_COUNT")
+                )
+            )
+        )
+        .subcommand(App::new("destroy")
+            .subcommand(App::new("vm")))
+        .subcommand(App::new("list")
+            .subcommand(App::new("vms")))
+        .get_matches();
 
-    let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
-    let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
-    let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
-    let client = Client::new(&shared_config);
+    if let Some(cmd) = matches.subcommand_matches("create") {
+        if let Some(compute) = cmd.subcommand_matches("vm") {
+            println!("create vm!");
 
+            // load default config
+            let p = Path::new(REIGN_DEFAULT);
+
+            // merge with args
+            let merged = match load_config_from_file(p) {
+                Ok(dc) => match dc {
+                    Some(c) => c.merge(compute),
+                    None => CreateVmConfig::new().merge(compute)
+                },
+                Err(_) => CreateVmConfig::new().merge(compute),
+            };
+            println!("merged: {:?}", merged);
+
+            // create client
+            let conf_region: Region = Region::new(merged.to_owned().region);
+            let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
+            let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+            let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+            let client = Client::new(&shared_config);
+
+            // create vm(s)
+            create_vm(&client, &merged).await?;
+        }
+    } else if let Some(cmd) = matches.subcommand_matches("destroy") {
+        if let Some(compute) = cmd.subcommand_matches("vm") {
+            println!("destroy vm!")
+        }
+    }
+
+    Ok(())
+}
+
+
+async fn create_vm(client: &Client, config: &CreateVmConfig) -> Result<(), aws_sdk_ec2::Error> {
     // run EC2 instance
     let instance_id = ec2_run_instance(&client, &config).await?;
     println!("InstanceId: {instance_id}");
@@ -104,11 +258,12 @@ fn user_data() -> String {
 
 set -e
 
-echo "test" > /home/ubuntu/test.txt
+sudo apt update -y
+echo "test" > ~/complete.txt
 "#);
 }
 
-async fn ec2_run_instance(client: &Client, config: &Config) -> Result<String, Error> {
+async fn ec2_run_instance(client: &Client, config: &CreateVmConfig) -> Result<String, aws_sdk_ec2::Error> {
     let network_spec = InstanceNetworkInterfaceSpecification::builder()
         .associate_public_ip_address(true)
         .device_index(0)
@@ -171,7 +326,7 @@ async fn wait_for_open_port(address: &String) {
     }
 }
 
-async fn ec2_wait_for_state(client: &Client, id: String, state: &str) -> Result<Instance, Error> {
+async fn ec2_wait_for_state(client: &Client, id: String, state: &str) -> Result<Instance, aws_sdk_ec2::Error> {
     let mut instance: Instance = Instance::builder().build();
 
     loop {
