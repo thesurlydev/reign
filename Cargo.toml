@@ -15,8 +15,8 @@ categories = ["command-line-utilities", "command-line-interface", "utilities"]
 maintenance = { status = "actively-developed" }
 
 [dependencies]
-aws-config = "0.8.0"
-aws-sdk-ec2 = "0.8.0"
+aws-config = "0.9.0"
+aws-sdk-ec2 = "0.9.0"
 base64 = "0.13.0"
 clap = { version = "3", features = ["derive", "env"] }
 port_scanner = "0.1.5"

@@ -5,16 +5,16 @@ extern crate port_scanner;
 
 use std::error::Error;
 use std::fs::File;
-use std::io::{BufReader};
+use std::io::BufReader;
 use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::RetryConfig;
-use aws_sdk_ec2::{Client, Region};
-use aws_sdk_ec2::model::{Filter, IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType, Reservation, ResourceType, Tag, TagSpecification};
+use aws_sdk_ec2::model::{IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType, Reservation, ResourceType, Tag, TagSpecification};
 use aws_sdk_ec2::output::DescribeInstancesOutput;
+use aws_sdk_ec2::Region;
 use base64::encode;
 use clap::{App, Arg, ArgMatches};
 use port_scanner::scan_port_addr;
@@ -251,7 +251,7 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
             let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
             let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
-            let client = Client::new(&shared_config);
+            let client = aws_sdk_ec2::Client::new(&shared_config);
 
             // create vm(s)
             create_vm(&client, &merged).await?;
@@ -277,23 +277,23 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
             let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
             let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
-            let client = Client::new(&shared_config);
+            let client = aws_sdk_ec2::Client::new(&shared_config);
 
-            destroy_vm(&client, &DestroyVmConfig::new("todo".to_string(), "todo".to_string(),"todo".to_string()));
+            destroy_vm(&client, &DestroyVmConfig::new("todo".to_string(), "todo".to_string(), "todo".to_string()));
         }
     }
 
     Ok(())
 }
 
-async fn destroy_vm(client: &Client, config: &DestroyVmConfig) -> Result<(), aws_sdk_ec2::Error> {
+async fn destroy_vm(client: &aws_sdk_ec2::Client, config: &DestroyVmConfig) -> Result<(), aws_sdk_ec2::Error> {
     println!("TODO destroy vm!");
     // TODO do it
     Ok(())
 }
 
 
-async fn create_vm(client: &Client, config: &CreateVmConfig) -> Result<(), aws_sdk_ec2::Error> {
+async fn create_vm(client: &aws_sdk_ec2::Client, config: &CreateVmConfig) -> Result<(), aws_sdk_ec2::Error> {
     // run EC2 instance
     let instance_id = ec2_run_instance(&client, &config).await?;
     println!("InstanceId: {instance_id}");
@@ -333,7 +333,7 @@ echo "test" > ~/complete.txt
 "#);
 }
 
-async fn ec2_run_instance(client: &Client, config: &CreateVmConfig) -> Result<String, aws_sdk_ec2::Error> {
+async fn ec2_run_instance(client: &aws_sdk_ec2::Client, config: &CreateVmConfig) -> Result<String, aws_sdk_ec2::Error> {
     let network_spec = InstanceNetworkInterfaceSpecification::builder()
         .associate_public_ip_address(true)
         .device_index(0)
@@ -396,12 +396,12 @@ async fn wait_for_open_port(address: &String) {
     }
 }
 
-async fn ec2_wait_for_state(client: &Client, id: String, state: &str) -> Result<Instance, aws_sdk_ec2::Error> {
+async fn ec2_wait_for_state(client: &aws_sdk_ec2::Client, id: String, state: &str) -> Result<Instance, aws_sdk_ec2::Error> {
     let mut instance: Instance = Instance::builder().build();
 
     loop {
         let instance_ids = vec![id.to_owned()];
-        let status_filter = Filter::builder().name("instance-state-name").values(state).build();
+        let status_filter = aws_sdk_ec2::model::Filter::builder().name("instance-state-name").values(state).build();
         let filters = vec![status_filter];
         let describe_instances_output: DescribeInstancesOutput = client.describe_instances()
             .set_instance_ids(Some(instance_ids))
