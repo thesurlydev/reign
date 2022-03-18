@@ -1,5 +1,5 @@
 {
-  "name": "bar",
+  "name": "reign-test",
   "count": 1,
   "instance_type": "t3.nano",
   "ami": "ami-036d46416a34a611c",
@@ -8,5 +8,6 @@
   "group": "sg-37d22f44",
   "iam_role": "digitalsanctum-role",
   "region": "us-west-2",
-  "key": "beefcake"
+  "key": "beefcake",
+  "profile": "default"
 }

@@ -42,6 +42,8 @@ struct CreateVmConfig {
     key: String,
     /// Number of instances to run
     count: i32,
+    /// AWS profile
+    profile: String,
 }
 
 impl CreateVmConfig {
@@ -57,6 +59,7 @@ impl CreateVmConfig {
             region: "".to_string(),
             key: "".to_string(),
             count: 0,
+            profile: "".to_string(),
         };
     }
 
@@ -65,8 +68,48 @@ impl CreateVmConfig {
         if let Some(name) = args.value_of("name") {
             m.name = String::from(name);
         }
+        if let Some(count) = args.value_of("count") {
+            m.count = count.parse().unwrap()
+        }
+        if let Some(profile) = args.value_of("profile") {
+            m.profile = String::from(profile)
+        }
         // TODO add other overrides
 
+        m
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
+struct DestroyVmConfig {
+    /// Name to tag instance with
+    name: String,
+    /// Name of the AWS region
+    region: String,
+    /// AWS profile
+    profile: String,
+}
+
+impl DestroyVmConfig {
+    fn new(name: String, region: String, profile: String) -> DestroyVmConfig {
+        return DestroyVmConfig {
+            name,
+            region,
+            profile,
+        };
+    }
+
+    fn merge(&self, args: &ArgMatches) -> DestroyVmConfig {
+        let mut m = self.clone();
+        if let Some(name) = args.value_of("name") {
+            m.name = String::from(name);
+        }
+        if let Some(region) = args.value_of("region") {
+            m.region = String::from(region)
+        }
+        if let Some(profile) = args.value_of("profile") {
+            m.profile = String::from(profile)
+        }
         m
     }
 }
@@ -87,7 +130,6 @@ const REIGN_DEFAULT: &str = "reign.json";
 
 #[tokio::main]
 async fn main() -> Result<(), aws_sdk_ec2::Error> {
-
     let matches = App::new("reign")
         .about("foo")
         .subcommand(App::new("create")
@@ -186,6 +228,7 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             .subcommand(App::new("vms")))
         .get_matches();
 
+
     if let Some(cmd) = matches.subcommand_matches("create") {
         if let Some(compute) = cmd.subcommand_matches("vm") {
             println!("create vm!");
@@ -215,10 +258,37 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
         }
     } else if let Some(cmd) = matches.subcommand_matches("destroy") {
         if let Some(compute) = cmd.subcommand_matches("vm") {
-            println!("destroy vm!")
+
+            // load default config
+            let p = Path::new(REIGN_DEFAULT);
+
+            // merge with args
+            let merged = match load_config_from_file(p) {
+                Ok(dc) => match dc {
+                    Some(c) => c.merge(compute),
+                    None => CreateVmConfig::new().merge(compute)
+                },
+                Err(_) => CreateVmConfig::new().merge(compute),
+            };
+            println!("merged: {:?}", merged);
+
+            // create client
+            let conf_region: Region = Region::new(merged.to_owned().region);
+            let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
+            let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+            let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+            let client = Client::new(&shared_config);
+
+            destroy_vm(&client, &DestroyVmConfig::new("todo".to_string(), "todo".to_string(),"todo".to_string()));
         }
     }
 
+    Ok(())
+}
+
+async fn destroy_vm(client: &Client, config: &DestroyVmConfig) -> Result<(), aws_sdk_ec2::Error> {
+    println!("TODO destroy vm!");
+    // TODO do it
     Ok(())
 }
 
