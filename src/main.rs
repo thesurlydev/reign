@@ -12,7 +12,10 @@ use std::time::Duration;
 
 use aws_config::meta::region::RegionProviderChain;
 use aws_config::RetryConfig;
-use aws_sdk_ec2::model::{IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType, Reservation, ResourceType, Tag, TagSpecification};
+use aws_sdk_ec2::model::{
+    IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType,
+    Reservation, ResourceType, Tag, TagSpecification,
+};
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::Region;
 use base64::encode;
@@ -111,7 +114,6 @@ impl ListVmConfig {
     }
 }
 
-
 #[derive(Deserialize, Debug, Clone)]
 struct DestroyVmConfig {
     /// Name to tag instance with
@@ -146,7 +148,9 @@ impl DestroyVmConfig {
     }
 }
 
-fn load_config_from_file<P: AsRef<Path>>(path: P) -> Result<Option<CreateVmConfig>, Box<dyn Error>> {
+fn load_config_from_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<Option<CreateVmConfig>, Box<dyn Error>> {
     let p = path.as_ref();
     if !p.exists() {
         return Ok(None);
@@ -164,132 +168,169 @@ const REIGN_DEFAULT: &str = "reign.json";
 async fn main() -> Result<(), aws_sdk_ec2::Error> {
     let matches = App::new("reign")
         .about("Quickly spin up compute")
-        .subcommand(App::new("create")
-            .subcommand(App::new("vm")
-                .arg(Arg::new("name")
-                    .short('n')
-                    .long("name")
-                    .help("Value given to the 'Name' tag")
-                    .takes_value(true)
-                    .value_name("NAME")
-                    .env("REIGN_VM_NAME")
-                )
-                .arg(Arg::new("instance_type")
-                    .short('t')
-                    .long("instance_type")
-                    .help("Instance type of the VM")
-                    .takes_value(true)
-                    .value_name("INSTANCE_TYPE")
-                    .env("REIGN_VM_INSTANCE_TYPE")
-                )
-                .arg(Arg::new("ami")
-                    .short('a')
-                    .long("ami")
-                    .help("Amazon Machine Image")
-                    .takes_value(true)
-                    .value_name("AMI")
-                    .env("REIGN_VM_MACHINE_IMAGE")
-                )
-                .arg(Arg::new("user")
-                    .short('u')
-                    .long("user")
-                    .help("SSH user")
-                    .takes_value(true)
-                    .value_name("SSH_USER")
-                    .env("REIGN_VM_SSH_USER")
-                )
-                .arg(Arg::new("subnet")
-                    .short('s')
-                    .long("subnet")
-                    .help("Subnet ID")
-                    .takes_value(true)
-                    .value_name("SUBNET_ID")
-                    .env("REIGN_VM_SUBNET_ID")
-                )
-                .arg(Arg::new("group")
-                    .long("security_group")
-                    .help("Security group ID")
-                    .takes_value(true)
-                    .value_name("SECURITY_GROUP_ID")
-                    .env("REIGN_VM_SECURITY_GROUP_ID")
-                )
-                .arg(Arg::new("iam-role")
-                    .short('r')
-                    .long("iam-role")
-                    .help("IAM role name")
-                    .takes_value(true)
-                    .value_name("IAM_ROLE")
-                    .env("REIGN_VM_IAM_ROLE")
-                )
-                .arg(Arg::new("region")
-                    .long("region")
-                    .help("Region to create the VM in")
-                    .takes_value(true)
-                    .value_name("REGION")
-                    .env("REIGN_VM_REGION")
-                )
-                .arg(Arg::new("profile")
-                    .short('p')
-                    .long("profile")
-                    .help("Profile to use")
-                    .takes_value(true)
-                    .value_name("PROFILE")
-                    .env("REIGN_VM_PROFILE")
-                )
-                .arg(Arg::new("key-pair")
-                    .short('k')
-                    .long("key-pair")
-                    .help("Key pair to associate with the VM")
-                    .takes_value(true)
-                    .value_name("KEY_PAIR")
-                    .env("REIGN_VM_KEY_PAIR")
-                )
-                .arg(Arg::new("count")
-                    .short('c')
-                    .long("count")
-                    .help("Number of VMs to create")
-                    .takes_value(true)
-                    .value_name("COUNT")
-                    .env("REIGN_VM_COUNT")
-                )
-            )
+        .subcommand(
+            App::new("create").subcommand(
+                App::new("vm")
+                    .arg(
+                        Arg::new("name")
+                            .short('n')
+                            .long("name")
+                            .help("Value given to the 'Name' tag")
+                            .takes_value(true)
+                            .value_name("NAME")
+                            .env("REIGN_VM_NAME"),
+                    )
+                    .arg(
+                        Arg::new("instance_type")
+                            .short('t')
+                            .long("instance_type")
+                            .help("Instance type of the VM")
+                            .takes_value(true)
+                            .value_name("INSTANCE_TYPE")
+                            .env("REIGN_VM_INSTANCE_TYPE"),
+                    )
+                    .arg(
+                        Arg::new("ami")
+                            .short('a')
+                            .long("ami")
+                            .help("Amazon Machine Image")
+                            .takes_value(true)
+                            .value_name("AMI")
+                            .env("REIGN_VM_MACHINE_IMAGE"),
+                    )
+                    .arg(
+                        Arg::new("user")
+                            .short('u')
+                            .long("user")
+                            .help("SSH user")
+                            .takes_value(true)
+                            .value_name("SSH_USER")
+                            .env("REIGN_VM_SSH_USER"),
+                    )
+                    .arg(
+                        Arg::new("subnet")
+                            .short('s')
+                            .long("subnet")
+                            .help("Subnet ID")
+                            .takes_value(true)
+                            .value_name("SUBNET_ID")
+                            .env("REIGN_VM_SUBNET_ID"),
+                    )
+                    .arg(
+                        Arg::new("group")
+                            .long("security_group")
+                            .help("Security group ID")
+                            .takes_value(true)
+                            .value_name("SECURITY_GROUP_ID")
+                            .env("REIGN_VM_SECURITY_GROUP_ID"),
+                    )
+                    .arg(
+                        Arg::new("iam-role")
+                            .short('r')
+                            .long("iam-role")
+                            .help("IAM role name")
+                            .takes_value(true)
+                            .value_name("IAM_ROLE")
+                            .env("REIGN_VM_IAM_ROLE"),
+                    )
+                    .arg(
+                        Arg::new("region")
+                            .long("region")
+                            .help("Region to create the VM in")
+                            .takes_value(true)
+                            .value_name("REGION")
+                            .env("REIGN_VM_REGION"),
+                    )
+                    .arg(
+                        Arg::new("profile")
+                            .short('p')
+                            .long("profile")
+                            .help("Profile to use")
+                            .takes_value(true)
+                            .value_name("PROFILE")
+                            .env("REIGN_VM_PROFILE"),
+                    )
+                    .arg(
+                        Arg::new("key-pair")
+                            .short('k')
+                            .long("key-pair")
+                            .help("Key pair to associate with the VM")
+                            .takes_value(true)
+                            .value_name("KEY_PAIR")
+                            .env("REIGN_VM_KEY_PAIR"),
+                    )
+                    .arg(
+                        Arg::new("count")
+                            .short('c')
+                            .long("count")
+                            .help("Number of VMs to create")
+                            .takes_value(true)
+                            .value_name("COUNT")
+                            .env("REIGN_VM_COUNT"),
+                    ),
+            ),
         )
-        .subcommand(App::new("destroy")
-            .subcommand(App::new("vm"))
-            .arg(Arg::new("name")
-                .short('n')
-                .long("name")
-                .help("Name of the vm to destroy")
-                .takes_value(true)
-                .value_name("NAME")
-                .env("REIGN_VM_NAME")
-            ))
-        .subcommand(App::new("list")
-            .arg(Arg::new("name")
-                .short('n')
-                .long("name")
-                .help("Name of the vm")
-                .takes_value(true)
-                .value_name("NAME")
-                .env("REIGN_VM_NAME")
-            )
-            .arg(Arg::new("region")
-                .long("region")
-                .help("Region the VM is in")
-                .takes_value(true)
-                .value_name("REGION")
-                .env("REIGN_VM_REGION")
-            )
-            .arg(Arg::new("profile")
-                .short('p')
-                .long("profile")
-                .help("Profile to use")
-                .takes_value(true)
-                .value_name("PROFILE")
-                .env("REIGN_VM_PROFILE")
-            ))
+        .subcommand(
+            App::new("destroy")
+                .subcommand(
+                    App::new("vm").arg(
+                        Arg::new("name")
+                            .short('n')
+                            .long("name")
+                            .help("Name of the vm to destroy")
+                            .takes_value(true)
+                            .value_name("NAME")
+                            .env("REIGN_VM_NAME"),
+                    ),
+                )
+                .arg(
+                    Arg::new("region")
+                        .long("region")
+                        .help("Region the VM is in")
+                        .takes_value(true)
+                        .value_name("REGION")
+                        .env("REIGN_VM_REGION"),
+                )
+                .arg(
+                    Arg::new("profile")
+                        .short('p')
+                        .long("profile")
+                        .help("Profile to use")
+                        .takes_value(true)
+                        .value_name("PROFILE")
+                        .env("REIGN_VM_PROFILE"),
+                ),
+        )
+        .subcommand(
+            App::new("list")
+                .arg(
+                    Arg::new("name")
+                        .short('n')
+                        .long("name")
+                        .help("Name of the vm")
+                        .takes_value(true)
+                        .value_name("NAME")
+                        .env("REIGN_VM_NAME"),
+                )
+                .arg(
+                    Arg::new("region")
+                        .long("region")
+                        .help("Region the VM is in")
+                        .takes_value(true)
+                        .value_name("REGION")
+                        .env("REIGN_VM_REGION"),
+                )
+                .arg(
+                    Arg::new("profile")
+                        .short('p')
+                        .long("profile")
+                        .help("Profile to use")
+                        .takes_value(true)
+                        .value_name("PROFILE")
+                        .env("REIGN_VM_PROFILE"),
+                ),
+        )
         .get_matches();
-
 
     if let Some(cmd) = matches.subcommand_matches("create") {
         if let Some(compute) = cmd.subcommand_matches("vm") {
@@ -302,24 +343,27 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             let merged = match load_config_from_file(p) {
                 Ok(dc) => match dc {
                     Some(c) => c.merge(compute),
-                    None => CreateVmConfig::new().merge(compute)
+                    None => CreateVmConfig::new().merge(compute),
                 },
                 Err(_) => CreateVmConfig::new().merge(compute),
             };
-            println!("merged: {:?}", merged);
+            // println!("merged: {:?}", merged);
 
             // create client
             let conf_region: Region = Region::new(merged.to_owned().region);
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
             let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
-            let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+            let shared_config = aws_config::from_env()
+                .region(region_provider)
+                .retry_config(retry_config)
+                .load()
+                .await;
             let client = aws_sdk_ec2::Client::new(&shared_config);
 
             // create vm(s)
             create_vm(&client, &merged).await?;
         }
-    } else if let Some(cmd) = matches.subcommand_matches("list") {
-
+    } else if let Some(_cmd) = matches.subcommand_matches("list") {
         // load default config
         let p = Path::new(REIGN_DEFAULT);
 
@@ -327,11 +371,11 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
         let merged = match load_config_from_file(p) {
             Ok(dc) => match dc {
                 Some(c) => c,
-                None => CreateVmConfig::new()
+                None => CreateVmConfig::new(),
             },
             Err(_) => CreateVmConfig::new(),
         };
-        println!("merged: {:?}", merged);
+        // println!("merged: {:?}", merged);
 
         // create listconfig from createconfig
         let list_config = ListVmConfig::new(merged.name, merged.region, merged.profile);
@@ -340,15 +384,16 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
         let conf_region: Region = Region::new(list_config.to_owned().region);
         let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
         let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
-        let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+        let shared_config = aws_config::from_env()
+            .region(region_provider)
+            .retry_config(retry_config)
+            .load()
+            .await;
         let client = aws_sdk_ec2::Client::new(&shared_config);
 
         list_vms(&client, &list_config).await?;
-
-
     } else if let Some(cmd) = matches.subcommand_matches("destroy") {
         if let Some(compute) = cmd.subcommand_matches("vm") {
-
             // load default config
             let p = Path::new(REIGN_DEFAULT);
 
@@ -356,58 +401,94 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             let merged = match load_config_from_file(p) {
                 Ok(dc) => match dc {
                     Some(c) => c.merge(compute),
-                    None => CreateVmConfig::new().merge(compute)
+                    None => CreateVmConfig::new().merge(compute),
                 },
                 Err(_) => CreateVmConfig::new().merge(compute),
             };
-            println!("merged: {:?}", merged);
+            // println!("merged: {:?}", merged);
+
+            // create destroyconfig from createconfig
+            let destroy_config = DestroyVmConfig::new(merged.name, merged.region, merged.profile);
 
             // create client
-            let conf_region: Region = Region::new(merged.to_owned().region);
+            let conf_region: Region = Region::new(destroy_config.to_owned().region);
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
             let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
-            let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+            let shared_config = aws_config::from_env()
+                .region(region_provider)
+                .retry_config(retry_config)
+                .load()
+                .await;
             let client = aws_sdk_ec2::Client::new(&shared_config);
 
-            destroy_vm(&client, &DestroyVmConfig::new("todo".to_string(), "todo".to_string(), "todo".to_string()));
+            destroy_vm(&client, &destroy_config).await?;
         }
     }
 
     Ok(())
 }
 
-async fn list_vms(client: &aws_sdk_ec2::Client, config: &ListVmConfig) -> Result<(), aws_sdk_ec2::Error> {
-
-    let resp = client
-        .describe_instances()
-        .send()
-        .await?;
+async fn list_vms(
+    client: &aws_sdk_ec2::Client,
+    _config: &ListVmConfig,
+) -> Result<(), aws_sdk_ec2::Error> {
+    let resp = client.describe_instances().send().await?;
 
     for reservation in resp.reservations().unwrap_or_default() {
         for instance in reservation.instances().unwrap_or_default() {
-
             println!("");
-            let name_tag = instance.tags().unwrap_or_default().iter().find(|t| t.key().unwrap_or_default() == "Name");
+            let name_tag = instance
+                .tags()
+                .unwrap_or_default()
+                .iter()
+                .find(|t| t.key().unwrap_or_default() == "Name");
             println!("       Name: {}", name_tag.unwrap().value().unwrap());
             println!("Instance ID: {}", instance.instance_id().unwrap());
-            println!("      State: {:?}", instance.state().unwrap().name().unwrap());
+            println!(
+                "      State: {:?}",
+                instance.state().unwrap().name().unwrap()
+            );
             println!("--------------------");
         }
     }
 
+    Ok(())
+}
+
+async fn destroy_vm(
+    client: &aws_sdk_ec2::Client,
+    config: &DestroyVmConfig,
+) -> Result<(), aws_sdk_ec2::Error> {
+    let resp = client.describe_instances().send().await?;
+
+    for reservation in resp.reservations().unwrap_or_default() {
+        for instance in reservation.instances().unwrap_or_default() {
+            let name_tag = instance
+                .tags()
+                .unwrap_or_default()
+                .iter()
+                .find(|t| t.key().unwrap_or_default() == "Name");
+
+            if name_tag.unwrap().value().unwrap() == config.name {
+                let instance_id = instance.instance_id().unwrap().to_string();
+                println!("Terminating instance: {}", instance_id);
+                let instance_ids = Some(vec![instance_id]);
+                client
+                    .terminate_instances()
+                    .set_instance_ids(instance_ids)
+                    .send()
+                    .await?;
+            }
+        }
+    }
 
     Ok(())
 }
 
-
-async fn destroy_vm(client: &aws_sdk_ec2::Client, config: &DestroyVmConfig) -> Result<(), aws_sdk_ec2::Error> {
-    println!("TODO destroy vm!");
-    // TODO do it
-    Ok(())
-}
-
-
-async fn create_vm(client: &aws_sdk_ec2::Client, config: &CreateVmConfig) -> Result<(), aws_sdk_ec2::Error> {
+async fn create_vm(
+    client: &aws_sdk_ec2::Client,
+    config: &CreateVmConfig,
+) -> Result<(), aws_sdk_ec2::Error> {
     // run EC2 instance
     let instance_id = ec2_run_instance(&client, &config).await?;
     println!("InstanceId: {instance_id}");
@@ -431,23 +512,31 @@ async fn create_vm(client: &aws_sdk_ec2::Client, config: &CreateVmConfig) -> Res
     wait_for_open_port(&address).await;
     println!("SSH port is now available");
     println!();
-    println!("Connection string: ssh -i ~/.ssh/{}.pem {}@{public_dns}", config.key, config.user);
+    println!(
+        "Connection string: ssh -i ~/.ssh/{}.pem {}@{public_dns}",
+        config.key, config.user
+    );
     println!();
 
     Ok(())
 }
 
 fn user_data() -> String {
-    return encode(r#"#!/bin/bash
+    return encode(
+        r#"#!/bin/bash
 
 set -e
 
 sudo apt update -y
 echo "test" > ~/complete.txt
-"#);
+"#,
+    );
 }
 
-async fn ec2_run_instance(client: &aws_sdk_ec2::Client, config: &CreateVmConfig) -> Result<String, aws_sdk_ec2::Error> {
+async fn ec2_run_instance(
+    client: &aws_sdk_ec2::Client,
+    config: &CreateVmConfig,
+) -> Result<String, aws_sdk_ec2::Error> {
     let network_spec = InstanceNetworkInterfaceSpecification::builder()
         .associate_public_ip_address(true)
         .device_index(0)
@@ -510,19 +599,29 @@ async fn wait_for_open_port(address: &String) {
     }
 }
 
-async fn ec2_wait_for_state(client: &aws_sdk_ec2::Client, id: String, state: &str) -> Result<Instance, aws_sdk_ec2::Error> {
+async fn ec2_wait_for_state(
+    client: &aws_sdk_ec2::Client,
+    id: String,
+    state: &str,
+) -> Result<Instance, aws_sdk_ec2::Error> {
     let mut instance: Instance = Instance::builder().build();
 
     loop {
         let instance_ids = vec![id.to_owned()];
-        let status_filter = aws_sdk_ec2::model::Filter::builder().name("instance-state-name").values(state).build();
+        let status_filter = aws_sdk_ec2::model::Filter::builder()
+            .name("instance-state-name")
+            .values(state)
+            .build();
         let filters = vec![status_filter];
-        let describe_instances_output: DescribeInstancesOutput = client.describe_instances()
+        let describe_instances_output: DescribeInstancesOutput = client
+            .describe_instances()
             .set_instance_ids(Some(instance_ids))
             .set_filters(Some(filters))
-            .send().await?;
+            .send()
+            .await?;
 
-        let reservations: Vec<Reservation> = describe_instances_output.reservations.unwrap_or_default();
+        let reservations: Vec<Reservation> =
+            describe_instances_output.reservations.unwrap_or_default();
         if reservations.len() == 1 {
             let reservation: Reservation = reservations.to_owned().pop().unwrap();
             let instances = reservation.instances.unwrap_or_default();
