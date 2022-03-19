@@ -14,7 +14,7 @@ use aws_config::meta::region::RegionProviderChain;
 use aws_config::RetryConfig;
 use aws_sdk_ec2::model::{
     IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType,
-    Reservation, ResourceType, Tag, TagSpecification,
+    Reservation, ResourceType, Tag, TagSpecification, InstanceStateName,
 };
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::Region;
@@ -467,9 +467,10 @@ async fn destroy_vm(
                 .tags()
                 .unwrap_or_default()
                 .iter()
-                .find(|t| t.key().unwrap_or_default() == "Name");
+                .find(|t| t.key().unwrap_or_default() == "Name").unwrap().value().unwrap();
+            let state = instance.state().unwrap().name().unwrap().as_str();                            
 
-            if name_tag.unwrap().value().unwrap() == config.name {
+            if name_tag == config.name && InstanceStateName::Running.as_str() == state {
                 let instance_id = instance.instance_id().unwrap().to_string();
                 println!("Terminating instance: {}", instance_id);
                 let instance_ids = Some(vec![instance_id]);
