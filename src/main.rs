@@ -81,6 +81,38 @@ impl CreateVmConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+struct ListVmConfig {
+    name: String,
+    region: String,
+    profile: String,
+}
+
+impl ListVmConfig {
+    fn new(name: String, region: String, profile: String) -> ListVmConfig {
+        return ListVmConfig {
+            name,
+            region,
+            profile,
+        };
+    }
+
+    fn merge(&self, args: &ArgMatches) -> ListVmConfig {
+        let mut m = self.clone();
+        if let Some(name) = args.value_of("name") {
+            m.name = String::from(name);
+        }
+        if let Some(region) = args.value_of("region") {
+            m.region = String::from(region)
+        }
+        if let Some(profile) = args.value_of("profile") {
+            m.profile = String::from(profile)
+        }
+        m
+    }
+}
+
+
+#[derive(Deserialize, Debug, Clone)]
 struct DestroyVmConfig {
     /// Name to tag instance with
     name: String,
@@ -131,7 +163,7 @@ const REIGN_DEFAULT: &str = "reign.json";
 #[tokio::main]
 async fn main() -> Result<(), aws_sdk_ec2::Error> {
     let matches = App::new("reign")
-        .about("foo")
+        .about("Quickly spin up compute")
         .subcommand(App::new("create")
             .subcommand(App::new("vm")
                 .arg(Arg::new("name")
@@ -223,9 +255,39 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             )
         )
         .subcommand(App::new("destroy")
-            .subcommand(App::new("vm")))
+            .subcommand(App::new("vm"))
+            .arg(Arg::new("name")
+                .short('n')
+                .long("name")
+                .help("Name of the vm to destroy")
+                .takes_value(true)
+                .value_name("NAME")
+                .env("REIGN_VM_NAME")
+            ))
         .subcommand(App::new("list")
-            .subcommand(App::new("vms")))
+            .arg(Arg::new("name")
+                .short('n')
+                .long("name")
+                .help("Name of the vm")
+                .takes_value(true)
+                .value_name("NAME")
+                .env("REIGN_VM_NAME")
+            )
+            .arg(Arg::new("region")
+                .long("region")
+                .help("Region the VM is in")
+                .takes_value(true)
+                .value_name("REGION")
+                .env("REIGN_VM_REGION")
+            )
+            .arg(Arg::new("profile")
+                .short('p')
+                .long("profile")
+                .help("Profile to use")
+                .takes_value(true)
+                .value_name("PROFILE")
+                .env("REIGN_VM_PROFILE")
+            ))
         .get_matches();
 
 
@@ -256,6 +318,34 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
             // create vm(s)
             create_vm(&client, &merged).await?;
         }
+    } else if let Some(cmd) = matches.subcommand_matches("list") {
+
+        // load default config
+        let p = Path::new(REIGN_DEFAULT);
+
+        // merge with args
+        let merged = match load_config_from_file(p) {
+            Ok(dc) => match dc {
+                Some(c) => c,
+                None => CreateVmConfig::new()
+            },
+            Err(_) => CreateVmConfig::new(),
+        };
+        println!("merged: {:?}", merged);
+
+        // create listconfig from createconfig
+        let list_config = ListVmConfig::new(merged.name, merged.region, merged.profile);
+
+        // create client
+        let conf_region: Region = Region::new(list_config.to_owned().region);
+        let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
+        let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+        let shared_config = aws_config::from_env().region(region_provider).retry_config(retry_config).load().await;
+        let client = aws_sdk_ec2::Client::new(&shared_config);
+
+        list_vms(&client, &list_config).await?;
+
+
     } else if let Some(cmd) = matches.subcommand_matches("destroy") {
         if let Some(compute) = cmd.subcommand_matches("vm") {
 
@@ -285,6 +375,30 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
 
     Ok(())
 }
+
+async fn list_vms(client: &aws_sdk_ec2::Client, config: &ListVmConfig) -> Result<(), aws_sdk_ec2::Error> {
+
+    let resp = client
+        .describe_instances()
+        .send()
+        .await?;
+
+    for reservation in resp.reservations().unwrap_or_default() {
+        for instance in reservation.instances().unwrap_or_default() {
+
+            println!("");
+            let name_tag = instance.tags().unwrap_or_default().iter().find(|t| t.key().unwrap_or_default() == "Name");
+            println!("       Name: {}", name_tag.unwrap().value().unwrap());
+            println!("Instance ID: {}", instance.instance_id().unwrap());
+            println!("      State: {:?}", instance.state().unwrap().name().unwrap());
+            println!("--------------------");
+        }
+    }
+
+
+    Ok(())
+}
+
 
 async fn destroy_vm(client: &aws_sdk_ec2::Client, config: &DestroyVmConfig) -> Result<(), aws_sdk_ec2::Error> {
     println!("TODO destroy vm!");
