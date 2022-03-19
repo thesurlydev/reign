@@ -34,7 +34,7 @@ struct CreateVmConfig {
     /// SSH user
     user: String,
     /// ID of the subnet to run the VM on
-    subnet: String,
+    subnets: Vec<String>,
     /// Security group ID
     group: String,
     /// Name of the IAM role
@@ -56,7 +56,7 @@ impl CreateVmConfig {
             instance_type: "".to_string(),
             ami: "".to_string(),
             user: "".to_string(),
-            subnet: "".to_string(),
+            subnets: vec![],
             group: "".to_string(),
             iam_role: "".to_string(),
             region: "".to_string(),
@@ -208,13 +208,13 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
                             .env("REIGN_VM_SSH_USER"),
                     )
                     .arg(
-                        Arg::new("subnet")
+                        Arg::new("subnets")
                             .short('s')
-                            .long("subnet")
-                            .help("Subnet ID")
+                            .long("subnets")
+                            .help("Subnet IDs")
                             .takes_value(true)
-                            .value_name("SUBNET_ID")
-                            .env("REIGN_VM_SUBNET_ID"),
+                            .value_name("SUBNET_IDS")
+                            .env("REIGN_VM_SUBNET_IDS"),
                     )
                     .arg(
                         Arg::new("group")
@@ -448,7 +448,7 @@ async fn list_vms(
                 "      State: {:?}",
                 instance.state().unwrap().name().unwrap()
             );
-            println!("--------------------");
+            println!("-----------------------");
         }
     }
 
@@ -541,7 +541,7 @@ async fn ec2_run_instance(
     let network_spec = InstanceNetworkInterfaceSpecification::builder()
         .associate_public_ip_address(true)
         .device_index(0)
-        .subnet_id(&config.subnet)
+        .subnet_id(&config.subnets[0])
         .groups(&config.group)
         .build();
 

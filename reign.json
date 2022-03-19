@@ -4,7 +4,7 @@
   "instance_type": "t3.nano",
   "ami": "ami-036d46416a34a611c",
   "user": "ubuntu",
-  "subnet": "subnet-89ef61d3",
+  "subnets": ["subnet-89ef61d3", "subnet-1718566e", "subnet-56b5dd1d"],
   "group": "sg-37d22f44",
   "iam_role": "digitalsanctum-role",
   "region": "us-west-2",
