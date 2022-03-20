@@ -10,14 +10,20 @@ use std::path::Path;
 use std::thread::sleep;
 use std::time::Duration;
 
+use aws_config::environment::EnvironmentVariableCredentialsProvider;
+use aws_config::meta::credentials::CredentialsProviderChain;
 use aws_config::meta::region::RegionProviderChain;
+use aws_config::profile::ProfileFileCredentialsProvider;
 use aws_config::RetryConfig;
 use aws_sdk_ec2::model::{
-    IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification, InstanceType,
-    Reservation, ResourceType, Tag, TagSpecification, InstanceStateName,
+    IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification,
+    InstanceStateName, InstanceType, Reservation, ResourceType, Tag, TagSpecification,
 };
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::Region;
+use aws_sdk_ec2::types::SdkError;
+use aws_sdk_eks::error::CreateClusterError;
+use aws_sdk_eks::model::VpcConfigRequest;
 use base64::encode;
 use clap::{App, Arg, ArgMatches};
 use port_scanner::scan_port_addr;
@@ -115,6 +121,53 @@ impl ListVmConfig {
 }
 
 #[derive(Deserialize, Debug, Clone)]
+struct CreateEksConfig {
+    name: String,
+    role_arn: String,
+    subnets: Vec<String>,
+    region: String,
+    profile: String,
+}
+
+impl CreateEksConfig {
+    fn new(
+        name: String,
+        role_arn: String,
+        subnets: Vec<String>,
+        region: String,
+        profile: String,
+    ) -> CreateEksConfig {
+        return CreateEksConfig {
+            name,
+            role_arn,
+            subnets,
+            region,
+            profile,
+        };
+    }
+
+    fn merge(&self, args: &ArgMatches) -> CreateEksConfig {
+        let mut m = self.clone();
+        if let Some(name) = args.value_of("name") {
+            m.name = String::from(name);
+        }
+        if let Some(role_arn) = args.value_of("role_arn") {
+            m.role_arn = String::from(role_arn);
+        }
+        if let Some(subnets) = args.values_of("subnets") {
+            m.subnets = subnets.map(|s| String::from(s)).collect();
+        }
+        if let Some(region) = args.value_of("region") {
+            m.region = String::from(region);
+        }
+        if let Some(profile) = args.value_of("profile") {
+            m.profile = String::from(profile)
+        }
+        m
+    }
+}
+
+#[derive(Deserialize, Debug, Clone)]
 struct DestroyVmConfig {
     /// Name to tag instance with
     name: String,
@@ -165,110 +218,160 @@ fn load_config_from_file<P: AsRef<Path>>(
 const REIGN_DEFAULT: &str = "reign.json";
 
 #[tokio::main]
-async fn main() -> Result<(), aws_sdk_ec2::Error> {
+async fn main() -> Result<(), Box<dyn Error>> {
     let matches = App::new("reign")
         .about("Quickly spin up compute")
         .subcommand(
-            App::new("create").subcommand(
-                App::new("vm")
-                    .arg(
-                        Arg::new("name")
-                            .short('n')
-                            .long("name")
-                            .help("Value given to the 'Name' tag")
-                            .takes_value(true)
-                            .value_name("NAME")
-                            .env("REIGN_VM_NAME"),
-                    )
-                    .arg(
-                        Arg::new("instance_type")
-                            .short('t')
-                            .long("instance_type")
-                            .help("Instance type of the VM")
-                            .takes_value(true)
-                            .value_name("INSTANCE_TYPE")
-                            .env("REIGN_VM_INSTANCE_TYPE"),
-                    )
-                    .arg(
-                        Arg::new("ami")
-                            .short('a')
-                            .long("ami")
-                            .help("Amazon Machine Image")
-                            .takes_value(true)
-                            .value_name("AMI")
-                            .env("REIGN_VM_MACHINE_IMAGE"),
-                    )
-                    .arg(
-                        Arg::new("user")
-                            .short('u')
-                            .long("user")
-                            .help("SSH user")
-                            .takes_value(true)
-                            .value_name("SSH_USER")
-                            .env("REIGN_VM_SSH_USER"),
-                    )
-                    .arg(
-                        Arg::new("subnets")
-                            .short('s')
-                            .long("subnets")
-                            .help("Subnet IDs")
-                            .takes_value(true)
-                            .value_name("SUBNET_IDS")
-                            .env("REIGN_VM_SUBNET_IDS"),
-                    )
-                    .arg(
-                        Arg::new("group")
-                            .long("security_group")
-                            .help("Security group ID")
-                            .takes_value(true)
-                            .value_name("SECURITY_GROUP_ID")
-                            .env("REIGN_VM_SECURITY_GROUP_ID"),
-                    )
-                    .arg(
-                        Arg::new("iam-role")
-                            .short('r')
-                            .long("iam-role")
-                            .help("IAM role name")
-                            .takes_value(true)
-                            .value_name("IAM_ROLE")
-                            .env("REIGN_VM_IAM_ROLE"),
-                    )
-                    .arg(
-                        Arg::new("region")
-                            .long("region")
-                            .help("Region to create the VM in")
-                            .takes_value(true)
-                            .value_name("REGION")
-                            .env("REIGN_VM_REGION"),
-                    )
-                    .arg(
-                        Arg::new("profile")
-                            .short('p')
-                            .long("profile")
-                            .help("Profile to use")
-                            .takes_value(true)
-                            .value_name("PROFILE")
-                            .env("REIGN_VM_PROFILE"),
-                    )
-                    .arg(
-                        Arg::new("key-pair")
-                            .short('k')
-                            .long("key-pair")
-                            .help("Key pair to associate with the VM")
-                            .takes_value(true)
-                            .value_name("KEY_PAIR")
-                            .env("REIGN_VM_KEY_PAIR"),
-                    )
-                    .arg(
-                        Arg::new("count")
-                            .short('c')
-                            .long("count")
-                            .help("Number of VMs to create")
-                            .takes_value(true)
-                            .value_name("COUNT")
-                            .env("REIGN_VM_COUNT"),
-                    ),
-            ),
+            App::new("create")
+                .subcommand(
+                    App::new("cluster")
+                        .about("Create a Kubernetes cluster")
+                        .arg(
+                            Arg::new("name")
+                                .short('n')
+                                .long("name")
+                                .help("Name of the cluster")
+                                .takes_value(true)
+                                .value_name("CLUSTER_NAME")
+                                .env("REIGN_CLUSTER_NAME"),
+                        )
+                        .arg(
+                            Arg::new("subnets")
+                                .short('s')
+                                .long("subnets")
+                                .help("Subnet IDs")
+                                .takes_value(true)
+                                .value_name("CLUSTER_SUBNET_IDS")
+                                .env("REIGN_CLUSTER_SUBNET_IDS"),
+                        )
+                        .arg(
+                            Arg::new("role-arn")
+                                .short('r')
+                                .long("role-arn")
+                                .help("IAM role ARN")
+                                .takes_value(true)
+                                .value_name("CLUSTER_IAM_ROLE_ARN")
+                                .env("REIGN_CLUSTER_IAM_ROLE_ARN"),
+                        )
+                        .arg(
+                            Arg::new("region")
+                                .long("region")
+                                .help("Region to create the cluster in")
+                                .takes_value(true)
+                                .value_name("CLUSTER_REGION")
+                                .env("REIGN_VM_REGION"),
+                        )
+                        .arg(
+                            Arg::new("profile")
+                                .short('p')
+                                .long("profile")
+                                .help("Profile to use")
+                                .takes_value(true)
+                                .value_name("CLUSTER_PROFILE")
+                                .env("REIGN_CLUSTER_PROFILE"),
+                        ),
+                )
+                .subcommand(
+                    App::new("vm")
+                        .about("Create a VM instance")
+                        .arg(
+                            Arg::new("name")
+                                .short('n')
+                                .long("name")
+                                .help("Value given to the 'Name' tag")
+                                .takes_value(true)
+                                .value_name("NAME")
+                                .env("REIGN_VM_NAME"),
+                        )
+                        .arg(
+                            Arg::new("instance_type")
+                                .short('t')
+                                .long("instance_type")
+                                .help("Instance type of the VM")
+                                .takes_value(true)
+                                .value_name("INSTANCE_TYPE")
+                                .env("REIGN_VM_INSTANCE_TYPE"),
+                        )
+                        .arg(
+                            Arg::new("ami")
+                                .short('a')
+                                .long("ami")
+                                .help("Amazon Machine Image")
+                                .takes_value(true)
+                                .value_name("AMI")
+                                .env("REIGN_VM_MACHINE_IMAGE"),
+                        )
+                        .arg(
+                            Arg::new("user")
+                                .short('u')
+                                .long("user")
+                                .help("SSH user")
+                                .takes_value(true)
+                                .value_name("SSH_USER")
+                                .env("REIGN_VM_SSH_USER"),
+                        )
+                        .arg(
+                            Arg::new("subnets")
+                                .short('s')
+                                .long("subnets")
+                                .help("Subnet IDs")
+                                .takes_value(true)
+                                .value_name("SUBNET_IDS")
+                                .env("REIGN_VM_SUBNET_IDS"),
+                        )
+                        .arg(
+                            Arg::new("group")
+                                .long("security_group")
+                                .help("Security group ID")
+                                .takes_value(true)
+                                .value_name("SECURITY_GROUP_ID")
+                                .env("REIGN_VM_SECURITY_GROUP_ID"),
+                        )
+                        .arg(
+                            Arg::new("iam-role")
+                                .short('r')
+                                .long("iam-role")
+                                .help("IAM role name")
+                                .takes_value(true)
+                                .value_name("IAM_ROLE")
+                                .env("REIGN_VM_IAM_ROLE"),
+                        )
+                        .arg(
+                            Arg::new("region")
+                                .long("region")
+                                .help("Region to create the VM in")
+                                .takes_value(true)
+                                .value_name("REGION")
+                                .env("REIGN_VM_REGION"),
+                        )
+                        .arg(
+                            Arg::new("profile")
+                                .short('p')
+                                .long("profile")
+                                .help("Profile to use")
+                                .takes_value(true)
+                                .value_name("PROFILE")
+                                .env("REIGN_VM_PROFILE"),
+                        )
+                        .arg(
+                            Arg::new("key-pair")
+                                .short('k')
+                                .long("key-pair")
+                                .help("Key pair to associate with the VM")
+                                .takes_value(true)
+                                .value_name("KEY_PAIR")
+                                .env("REIGN_VM_KEY_PAIR"),
+                        )
+                        .arg(
+                            Arg::new("count")
+                                .short('c')
+                                .long("count")
+                                .help("Number of VMs to create")
+                                .takes_value(true)
+                                .value_name("COUNT")
+                                .env("REIGN_VM_COUNT"),
+                        ),
+                ),
         )
         .subcommand(
             App::new("destroy")
@@ -362,6 +465,64 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
 
             // create vm(s)
             create_vm(&client, &merged).await?;
+        } else if let Some(compute) = cmd.subcommand_matches("cluster") {
+            // load default config
+            let p = Path::new(REIGN_DEFAULT);
+
+            if !p.exists() {
+                panic!("config not found")
+            }
+
+            // merge with args
+            let merged = match load_config_from_file(p) {
+                Ok(dc) => match dc {
+                    Some(c) => c.merge(compute),
+                    None => CreateVmConfig::new().merge(compute),
+                },
+                Err(_) => CreateVmConfig::new().merge(compute),
+            };
+            // println!("merged: {:?}", merged);
+
+            // create create_eks_config from merged
+            let create_eks_config = CreateEksConfig::new(
+                merged.name,
+                String::from(
+                    "arn:aws:iam::515292396565:role/digitalsanctum-eks-demo-eks-cluster-role",
+                ),
+                merged.subnets,
+                merged.region,
+                merged.profile,
+            );
+
+            // create client
+            let conf_region: Region = Region::new(create_eks_config.to_owned().region);
+            let credentials_provider = CredentialsProviderChain::first_try(
+                "Environment",
+                EnvironmentVariableCredentialsProvider::new(),
+            )
+                .or_else(
+                    "Profile",
+                    ProfileFileCredentialsProvider::builder()
+                        .profile_name(create_eks_config.to_owned().profile)
+                        .build(),
+                );
+            let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
+            let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+            let shared_config = aws_config::from_env()
+                .region(region_provider)
+                .credentials_provider(credentials_provider)
+                .retry_config(retry_config)
+                .load()
+                .await;
+            let client = aws_sdk_eks::Client::new(&shared_config);
+
+            // TODO bubble up eks vs ec2 error
+
+            create_eks_cluster(&client, &create_eks_config).await?;
+
+            // TODO create node group
+
+            return Ok(());
         }
     } else if let Some(_cmd) = matches.subcommand_matches("list") {
         // load default config
@@ -382,9 +543,20 @@ async fn main() -> Result<(), aws_sdk_ec2::Error> {
 
         // create client
         let conf_region: Region = Region::new(list_config.to_owned().region);
+        let credentials_provider = CredentialsProviderChain::first_try(
+            "Environment",
+            EnvironmentVariableCredentialsProvider::new(),
+        )
+            .or_else(
+                "Profile",
+                ProfileFileCredentialsProvider::builder()
+                    .profile_name(list_config.to_owned().profile)
+                    .build(),
+            );
         let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
         let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
         let shared_config = aws_config::from_env()
+            .credentials_provider(credentials_provider)
             .region(region_provider)
             .retry_config(retry_config)
             .load()
@@ -467,8 +639,11 @@ async fn destroy_vm(
                 .tags()
                 .unwrap_or_default()
                 .iter()
-                .find(|t| t.key().unwrap_or_default() == "Name").unwrap().value().unwrap();
-            let state = instance.state().unwrap().name().unwrap().as_str();                            
+                .find(|t| t.key().unwrap_or_default() == "Name")
+                .unwrap()
+                .value()
+                .unwrap();
+            let state = instance.state().unwrap().name().unwrap().as_str();
 
             if name_tag == config.name && InstanceStateName::Running.as_str() == state {
                 let instance_id = instance.instance_id().unwrap().to_string();
@@ -482,6 +657,31 @@ async fn destroy_vm(
             }
         }
     }
+
+    Ok(())
+}
+
+async fn create_eks_cluster(
+    client: &aws_sdk_eks::Client,
+    config: &CreateEksConfig,
+) -> Result<(), SdkError<CreateClusterError>> {
+    let vpc_config_req = VpcConfigRequest::builder()
+        .set_subnet_ids(Some(config.to_owned().subnets))
+        .build();
+
+    let resp = match client
+        .create_cluster()
+        .set_role_arn(Some(config.role_arn.to_owned()))
+        .set_name(Some(config.name.to_owned()))
+        .set_resources_vpc_config(Some(vpc_config_req))
+        .send()
+        .await
+    {
+        Ok(it) => it,
+        Err(err) => return Err(err),
+    };
+
+    println!("Cluster created: {:?}", resp);
 
     Ok(())
 }
