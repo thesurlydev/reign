@@ -22,8 +22,9 @@ use aws_sdk_ec2::model::{
 use aws_sdk_ec2::output::DescribeInstancesOutput;
 use aws_sdk_ec2::Region;
 use aws_sdk_ec2::types::SdkError;
-use aws_sdk_eks::error::CreateClusterError;
-use aws_sdk_eks::model::VpcConfigRequest;
+use aws_sdk_eks::Client;
+use aws_sdk_eks::error::{CreateClusterError, CreateNodegroupError};
+use aws_sdk_eks::model::{AmiTypes, CapacityTypes, ClusterStatus, VpcConfigRequest};
 use base64::encode;
 use clap::{App, Arg, ArgMatches};
 use port_scanner::scan_port_addr;
@@ -484,7 +485,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // println!("merged: {:?}", merged);
 
             // create create_eks_config from merged
-            let create_eks_config = CreateEksConfig::new(
+            let create_eks_config: CreateEksConfig = CreateEksConfig::new(
                 merged.name,
                 String::from(
                     "arn:aws:iam::515292396565:role/digitalsanctum-eks-demo-eks-cluster-role",
@@ -516,11 +517,11 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 .await;
             let client = aws_sdk_eks::Client::new(&shared_config);
 
-            // TODO bubble up eks vs ec2 error
-
-            create_eks_cluster(&client, &create_eks_config).await?;
-
-            // TODO create node group
+            create_eks_cluster(&client, &create_eks_config).await.and_then(|_| {
+                println!("cluster created");
+                create_eks_nodegroup(&client, &create_eks_config);
+                Ok(())
+            })?;
 
             return Ok(());
         }
@@ -600,6 +601,23 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn create_eks_nodegroup(
+    client: &Client,
+    config: &CreateEksConfig) -> Result<(), SdkError<CreateNodegroupError>> {
+    println!("Creating EKS node group");
+
+    client.create_nodegroup()
+        .set_cluster_name(Some(config.to_owned().name))
+        .set_ami_type(Some(AmiTypes::Al2X8664))
+        .set_capacity_type(Some(CapacityTypes::OnDemand))
+        .set_nodegroup_name(Some(format!("{}-ng", config.to_owned().name)))
+        .set_subnets(Some(config.to_owned().subnets))
+        .set_node_role(Some("arn:aws:iam::515292396565:role/digitalsanctum-role".to_string()))
+        .send().await?;
+
+    Ok(())
+}
+
 async fn list_vms(
     client: &aws_sdk_ec2::Client,
     _config: &ListVmConfig,
@@ -667,6 +685,8 @@ async fn create_eks_cluster(
 ) -> Result<(), SdkError<CreateClusterError>> {
     let vpc_config_req = VpcConfigRequest::builder()
         .set_subnet_ids(Some(config.to_owned().subnets))
+        .set_endpoint_private_access(Some(true))
+        .set_endpoint_public_access(Some(true))
         .build();
 
     let resp = match client
@@ -682,6 +702,20 @@ async fn create_eks_cluster(
     };
 
     println!("Cluster created: {:?}", resp);
+
+    loop {
+        let result = client.describe_cluster()
+            .set_name(Some(config.name.to_owned()))
+            .send().await;
+        let r = result.unwrap();
+        let status = r.cluster().unwrap().status().unwrap();
+        println!("Cluster state: {:?}", status);
+        if ClusterStatus::Active == *status {
+            break;
+        } else {
+            std::thread::sleep(std::time::Duration::from_secs(5));
+        }
+    }
 
     Ok(())
 }
