@@ -456,7 +456,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // create client
             let conf_region: Region = Region::new(merged.to_owned().region);
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
-            let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+            let retry_config: RetryConfig = RetryConfig::standard();
             let shared_config = aws_config::from_env()
                 .region(region_provider)
                 .retry_config(retry_config)
@@ -508,7 +508,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                         .build(),
                 );
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
-            let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+            let retry_config: RetryConfig = RetryConfig::standard();
             let shared_config = aws_config::from_env()
                 .region(region_provider)
                 .credentials_provider(credentials_provider)
@@ -555,7 +555,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                     .build(),
             );
         let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
-        let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+        let retry_config: RetryConfig = RetryConfig::standard();
         let shared_config = aws_config::from_env()
             .credentials_provider(credentials_provider)
             .region(region_provider)
@@ -586,7 +586,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
             // create client
             let conf_region: Region = Region::new(destroy_config.to_owned().region);
             let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
-            let retry_config: RetryConfig = RetryConfig::default().with_max_attempts(5);
+            let retry_config: RetryConfig = RetryConfig::standard();
             let shared_config = aws_config::from_env()
                 .region(region_provider)
                 .retry_config(retry_config)
@@ -778,6 +778,8 @@ async fn ec2_run_instance(
         .subnet_id(&config.subnets[0])
         .groups(&config.group)
         .build();
+
+
 
     let tag_spec = TagSpecification::builder()
         .resource_type(ResourceType::Instance)
