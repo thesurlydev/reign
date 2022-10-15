@@ -3,32 +3,82 @@ extern crate clap;
 extern crate core;
 extern crate port_scanner;
 
-use std::error::Error;
-use std::fs::File;
-use std::io::BufReader;
-use std::path::Path;
-use std::thread::sleep;
-use std::time::Duration;
-
-use aws_config::environment::EnvironmentVariableCredentialsProvider;
-use aws_config::meta::credentials::CredentialsProviderChain;
-use aws_config::meta::region::RegionProviderChain;
-use aws_config::profile::ProfileFileCredentialsProvider;
-use aws_config::RetryConfig;
-use aws_sdk_ec2::model::{
-    IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification,
-    InstanceStateName, InstanceType, Reservation, ResourceType, Tag, TagSpecification,
+use std::{
+    error::Error,
+    fs::File,
+    io::BufReader,
+    path::Path,
+    thread::sleep,
+    time::Duration,
 };
-use aws_sdk_ec2::output::DescribeInstancesOutput;
-use aws_sdk_ec2::Region;
-use aws_sdk_ec2::types::SdkError;
-use aws_sdk_eks::Client;
-use aws_sdk_eks::error::{CreateClusterError, CreateNodegroupError};
-use aws_sdk_eks::model::{AmiTypes, CapacityTypes, ClusterStatus, VpcConfigRequest};
+
+use aws_config::{
+    environment::EnvironmentVariableCredentialsProvider,
+    meta::credentials::CredentialsProviderChain,
+    meta::region::RegionProviderChain,
+    profile::ProfileFileCredentialsProvider,
+    RetryConfig,
+};
+
+use aws_sdk_ec2::{
+    error::CreateVpcError,
+    model::{
+        IamInstanceProfileSpecification, Instance, InstanceNetworkInterfaceSpecification,
+        InstanceStateName, InstanceType, Reservation, ResourceType, TagSpecification,
+    },
+    output::DescribeInstancesOutput,
+    Region,
+    types::SdkError,
+};
+use aws_sdk_eks::{
+    Client as eks,
+    error::{CreateClusterError, CreateNodegroupError},
+    model::{AmiTypes, CapacityTypes, ClusterStatus, VpcConfigRequest},
+};
 use base64::encode;
 use clap::{App, Arg, ArgMatches};
 use port_scanner::scan_port_addr;
 use serde::Deserialize;
+
+#[derive(Deserialize, Debug, Clone)]
+struct CreateVpcConfig {
+    /// Name to assign to the VPC
+    name: String,
+    /// Name of the AWS region
+    region: String,
+    /// Number of subnets
+    subnet_count: i32,
+    /// CIDR block for the VPC
+    cidr: String,
+}
+
+impl CreateVpcConfig {
+    fn new() -> CreateVpcConfig {
+        return CreateVpcConfig {
+            name: "".to_string(),
+            region: "".to_string(),
+            subnet_count: 0,
+            cidr: "".to_string(),
+        };
+    }
+
+    fn merge(&self, args: &ArgMatches) -> CreateVpcConfig {
+        let mut m = self.clone();
+        if let Some(name) = args.value_of("name") {
+            m.name = String::from(name);
+        }
+        if let Some(count) = args.value_of("subnet_count") {
+            m.subnet_count = count.parse().unwrap()
+        }
+        if let Some(region) = args.value_of("region") {
+            m.region = String::from(region)
+        }
+        if let Some(cidr) = args.value_of("cidr") {
+            m.cidr = String::from(cidr)
+        }
+        m
+    }
+}
 
 #[derive(Deserialize, Debug, Clone)]
 struct CreateVmConfig {
@@ -202,7 +252,21 @@ impl DestroyVmConfig {
     }
 }
 
-fn load_config_from_file<P: AsRef<Path>>(
+fn load_vpc_config_from_file<P: AsRef<Path>>(
+    path: P,
+) -> Result<Option<CreateVpcConfig>, Box<dyn Error>> {
+    let p = path.as_ref();
+    if !p.exists() {
+        return Ok(None);
+    }
+    println!("Reading config from file: {}", p.display());
+    let file = File::open(path)?;
+    let reader = BufReader::new(file);
+    let c = serde_json::from_reader(reader)?;
+    Ok(c)
+}
+
+fn load_vm_config_from_file<P: AsRef<Path>>(
     path: P,
 ) -> Result<Option<CreateVmConfig>, Box<dyn Error>> {
     let p = path.as_ref();
@@ -216,17 +280,56 @@ fn load_config_from_file<P: AsRef<Path>>(
     Ok(c)
 }
 
-const REIGN_DEFAULT: &str = "reign.json";
+const REIGN_VM_DEFAULT: &str = "vm.json";
+const REIGN_VPC_DEFAULT: &str = "vpc.json";
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn Error>> {
+    env_logger::init();
+
     let matches = App::new("reign")
         .about("Quickly spin up compute")
+        .arg_required_else_help(true)
         .subcommand(
             App::new("create")
+                .arg_required_else_help(true)
+                .subcommand(
+                    App::new("vpc")
+                        .about("Create a VPC (WIP)")
+                        .arg(
+                            Arg::new("name")
+                                .short('n')
+                                .long("name")
+                                .help("Name of the VPC")
+                                .takes_value(true)
+                                .value_name("VPC_NAME")
+                                .env("REIGN_VPC_NAME"),
+                        )
+                        .arg(
+                            Arg::new("region")
+                                .long("region")
+                                .help("Region to create the VPC in")
+                                .takes_value(true)
+                                .value_name("VPC_REGION")
+                                .env("REIGN_VPC_REGION"),
+                        )
+                        .arg(
+                            Arg::new("subnet_count")
+                                .short('c')
+                                .long("subnet-count")
+                                .help("Number of subnets create")
+                                .takes_value(true)
+                                .value_name("SUBNET_COUNT")
+                                .env("REIGN_SUBNET_COUNT"),
+                        )
+                )
                 .subcommand(
                     App::new("cluster")
-                        .about("Create a Kubernetes cluster")
+                        .about("Create a load-balanced cluster (WIP)")
+                )
+                .subcommand(
+                    App::new("k8s")
+                        .about("Create a Kubernetes cluster (WIP)")
                         .arg(
                             Arg::new("name")
                                 .short('n')
@@ -274,7 +377,7 @@ async fn main() -> Result<(), Box<dyn Error>> {
                 )
                 .subcommand(
                     App::new("vm")
-                        .about("Create a VM instance")
+                        .about("Create a single VM instance")
                         .arg(
                             Arg::new("name")
                                 .short('n')
@@ -441,10 +544,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
             println!("create vm!");
 
             // load default config
-            let p = Path::new(REIGN_DEFAULT);
+            let p = Path::new(REIGN_VM_DEFAULT);
 
             // merge with args
-            let merged = match load_config_from_file(p) {
+            let merged = match load_vm_config_from_file(p) {
                 Ok(dc) => match dc {
                     Some(c) => c.merge(compute),
                     None => CreateVmConfig::new().merge(compute),
@@ -466,16 +569,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
 
             // create vm(s)
             create_vm(&client, &merged).await?;
-        } else if let Some(compute) = cmd.subcommand_matches("cluster") {
+        } else if let Some(compute) = cmd.subcommand_matches("vpc") {
+            let p = Path::new("vpc.json");
+            if !p.exists() {
+                panic!("config not found")
+            }
+
+            // merge with args
+            let merged = match load_vpc_config_from_file(p) {
+                Ok(dc) => match dc {
+                    Some(c) => c.merge(compute),
+                    None => CreateVpcConfig::new().merge(compute),
+                },
+                Err(_) => CreateVpcConfig::new().merge(compute),
+            };
+            println!("merged: {:?}", merged);
+
+            // create client
+            let conf_region: Region = Region::new(merged.to_owned().region);
+            let region_provider = RegionProviderChain::default_provider().or_else(conf_region);
+            let retry_config: RetryConfig = RetryConfig::standard();
+            let shared_config = aws_config::from_env()
+                .region(region_provider)
+                .retry_config(retry_config)
+                .load()
+                .await;
+            let client = aws_sdk_ec2::Client::new(&shared_config);
+
+
+            // create vpc
+            create_vpc(&client, &merged).await?;
+        } else if let Some(compute) = cmd.subcommand_matches("k8s") {
             // load default config
-            let p = Path::new(REIGN_DEFAULT);
+            let p = Path::new(REIGN_VM_DEFAULT);
 
             if !p.exists() {
                 panic!("config not found")
             }
 
             // merge with args
-            let merged = match load_config_from_file(p) {
+            let merged = match load_vm_config_from_file(p) {
                 Ok(dc) => match dc {
                     Some(c) => c.merge(compute),
                     None => CreateVmConfig::new().merge(compute),
@@ -527,10 +660,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
         }
     } else if let Some(_cmd) = matches.subcommand_matches("list") {
         // load default config
-        let p = Path::new(REIGN_DEFAULT);
+        let p = Path::new(REIGN_VM_DEFAULT);
 
         // merge with args
-        let merged = match load_config_from_file(p) {
+        let merged = match load_vm_config_from_file(p) {
             Ok(dc) => match dc {
                 Some(c) => c,
                 None => CreateVmConfig::new(),
@@ -568,10 +701,10 @@ async fn main() -> Result<(), Box<dyn Error>> {
     } else if let Some(cmd) = matches.subcommand_matches("destroy") {
         if let Some(compute) = cmd.subcommand_matches("vm") {
             // load default config
-            let p = Path::new(REIGN_DEFAULT);
+            let p = Path::new(REIGN_VM_DEFAULT);
 
             // merge with args
-            let merged = match load_config_from_file(p) {
+            let merged = match load_vm_config_from_file(p) {
                 Ok(dc) => match dc {
                     Some(c) => c.merge(compute),
                     None => CreateVmConfig::new().merge(compute),
@@ -601,8 +734,36 @@ async fn main() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
+async fn create_vpc(client: &aws_sdk_ec2::Client, config: &CreateVpcConfig) -> Result<(), SdkError<CreateVpcError>> {
+
+    let conf = config.to_owned();
+
+    let vpc_name = &conf.name;
+    let name_tag = aws_sdk_ec2::model::Tag::builder().key("Name").value(vpc_name).build();
+
+    let tag_spec = TagSpecification::builder()
+        .resource_type(ResourceType::Vpc)
+        .tags(name_tag)
+        .build();
+
+
+    let create_vpc_output = client.create_vpc()
+        .cidr_block(&conf.cidr)
+        .tag_specifications(tag_spec)
+        .send()
+        .await
+        .expect("Error creating VPC");    
+    
+    let output = create_vpc_output.vpc().expect("Error getting VPC from output");
+    let vpc_id = output.vpc_id().expect("Error getting VPC ID from output");
+    
+    println!("VPC created. ID={}, Name={}", vpc_id, vpc_name);
+
+    Ok(())
+}
+
 async fn create_eks_nodegroup(
-    client: &Client,
+    client: &eks,
     config: &CreateEksConfig) -> Result<(), SdkError<CreateNodegroupError>> {
     println!("Creating EKS node group");
 
@@ -646,7 +807,7 @@ async fn list_vms(
 }
 
 async fn destroy_vm(
-    client: &aws_sdk_ec2::Client,
+    client: &aws_sdk_ec2::client::Client,
     config: &DestroyVmConfig,
 ) -> Result<(), aws_sdk_ec2::Error> {
     let resp = client.describe_instances().send().await?;
@@ -680,7 +841,7 @@ async fn destroy_vm(
 }
 
 async fn create_eks_cluster(
-    client: &aws_sdk_eks::Client,
+    client: &eks,
     config: &CreateEksConfig,
 ) -> Result<(), SdkError<CreateClusterError>> {
     let vpc_config_req = VpcConfigRequest::builder()
@@ -780,10 +941,9 @@ async fn ec2_run_instance(
         .build();
 
 
-
     let tag_spec = TagSpecification::builder()
         .resource_type(ResourceType::Instance)
-        .tags(Tag::builder().key("Name").value(&config.name).build())
+        .tags(aws_sdk_ec2::model::Tag::builder().key("Name").value(&config.name).build())
         .build();
 
     let iam_spec = IamInstanceProfileSpecification::builder()
