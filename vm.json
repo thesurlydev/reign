@@ -1,13 +1,13 @@
 {
   "name": "reign-test",
   "count": 1,
-  "instance_type": "t3.nano",
-  "ami": "ami-036d46416a34a611c",
+  "instance_type": "t2.micro",
+  "ami": "ami-0efcece6bed30fd98",
   "user": "ubuntu",
-  "subnets": ["subnet-89ef61d3", "subnet-0b34a2db6bb7dcc77", "subnet-1718566e", "subnet-56b5dd1d"],
-  "group": "sg-37d22f44",
-  "iam_role": "digitalsanctum-role",
+  "subnets": ["subnet-05d971bea62b29c3d", "subnet-0b39b8367e5215fc8", "subnet-0579abecb448cf48b", "subnet-0b81a3d389e3de004"],
+  "group": "sg-0210ce564d70bb861",
+  "iam_role": "surly1",
   "region": "us-west-2",
-  "key": "beefcake",
+  "key": "surly1",
   "profile": "default"
 }
